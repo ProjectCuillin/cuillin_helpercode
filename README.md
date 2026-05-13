@@ -14,7 +14,7 @@ The goal is to provide reusable scripts and configurations that simplify common 
 
 The [`NATS/`](./NATS) directory includes:
 - `bootstrap-nats-local.sh`: Local bootstrap script that detects Oracle Linux or Debian, installs the required base packages and Ansible tooling, then runs the NATS production baseline against the same host.
-- `nats-local-production.yml`: Ansible playbook for a hardened standalone NATS Server installation with TLS, JetStream, generated credentials, a dedicated non-root `nats` service user, a reboot-persistent `systemd` service, and strict `firewalld` rules that expose only SSH and enabled NATS ports. If the `nats` user already exists, the playbook reuses it without changing the active account metadata.
+- `nats-local-production.yml`: Ansible playbook for a hardened standalone NATS Server installation with TLS, JetStream, generated credentials, external NATS monitoring, a dedicated non-root `nats` service user, a reboot-persistent `systemd` service, and strict `firewalld` rules that expose only SSH and enabled NATS ports. If the `nats` user already exists, the playbook reuses it without changing the active account metadata.
 - `nats-ol9-local-production.yml`: Backward-compatible wrapper that imports `nats-local-production.yml`.
 
 The NATS baseline is designed for a local single-node production-style installation on Oracle Linux or Debian. It explicitly prevents NATS from running as root, enables the service on boot, binds client traffic to the detected external IPv4 address rather than `0.0.0.0`, and validates the runtime firewall policy after installation.

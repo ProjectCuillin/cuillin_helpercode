@@ -42,7 +42,7 @@
     nats_external_address: "{{ ansible_default_ipv4.address | default('') }}"
     nats_client_host: "{{ nats_external_address }}"
     nats_client_port: 4222
-    nats_monitor_host: "127.0.0.1"
+    nats_monitor_host: "{{ nats_client_host }}"
     nats_monitor_port: 8222
     nats_monitor_check_host: "{{ '127.0.0.1' if nats_monitor_host in ['0.0.0.0', '::'] else nats_monitor_host }}"
 
@@ -84,14 +84,14 @@
     nats_cluster_routes: []
 
     nats_manage_firewall: true
-    nats_open_monitoring_firewall: false
+    nats_open_monitoring_firewall: true
     # A dedicated firewalld zone is attached to the detected external NIC.
     # Its inbound target is DROP and the playbook removes all allowed inbound entries except SSH and NATS.
     nats_firewall_zone: nats-external
     nats_firewall_allowed_services:
       - ssh
-    # For this local single-node baseline, only the NATS client port is exposed externally.
-    # Monitoring remains loopback-only by default; clustering adds the route port only when enabled.
+    # For this local single-node baseline, the NATS client and monitoring ports are exposed externally.
+    # Clustering adds the route port only when enabled.
     nats_firewall_nats_ports: >-
       {{
         [nats_client_port ~ '/tcp']
@@ -175,6 +175,14 @@
       ansible.builtin.fail:
         msg: "Refusing to expose NATS on '{{ nats_client_host }}'. Set nats_external_address to the external NIC IPv4 address."
       when: nats_client_host in ['0.0.0.0', '::', '127.0.0.1', 'localhost'] or nats_client_host is match('^127\.')
+
+    - name: Fail when exposed monitoring does not use the NATS listener address
+      ansible.builtin.fail:
+        msg: "When monitoring is opened in firewalld, nats_monitor_host must match nats_client_host. Detected nats_monitor_host='{{ nats_monitor_host }}' nats_client_host='{{ nats_client_host }}'."
+      when:
+        - nats_manage_firewall | bool
+        - nats_open_monitoring_firewall | bool
+        - nats_monitor_host != nats_client_host
 
   handlers:
     - name: Reload firewalld
@@ -488,7 +496,7 @@
         mode: "0640"
         content: |
           # Managed by Ansible. Do not edit directly.
-          # Production baseline: non-root service, TLS, accounts, JetStream, monitoring on loopback.
+          # Production baseline: non-root service, TLS, accounts, JetStream, external monitoring.
 
           server_name: "{{ ansible_hostname | default('localhost') }}"
           host: "{{ nats_client_host }}"
@@ -505,8 +513,7 @@
           max_pending: {{ nats_max_pending }}
           write_deadline: "10s"
 
-          http_host: "{{ nats_monitor_host }}"
-          http_port: {{ nats_monitor_port }}
+          http: "{{ nats_monitor_host }}:{{ nats_monitor_port }}"
 
           {% if nats_tls_enabled | bool %}
           tls {
@@ -897,6 +904,6 @@
           - "Service is enabled for reboot persistence: systemctl is-enabled nats"
           - "Client endpoint: {{ 'tls' if (nats_tls_enabled | bool) else 'nats' }}://{{ nats_client_host }}:{{ nats_client_port }}"
           - "External NIC/firewall zone: {{ nats_external_interface }} / {{ nats_firewall_zone }}; inbound allowed services={{ nats_firewall_allowed_services }}, ports={{ nats_firewall_allowed_ports }}."
-          - "Monitoring endpoint is bound to {{ nats_monitor_host }}:{{ nats_monitor_port }}. It is intentionally not exposed through firewalld by default."
+          - "Monitoring endpoint is bound to {{ nats_monitor_host }}:{{ nats_monitor_port }} and exposed through firewalld when nats_open_monitoring_firewall=true."
           - "Generated credentials are stored root-only in {{ nats_secret_file }}. Move these to Ansible Vault or your enterprise secret store."
           - "Bootstrap CA for clients, if self-signed TLS is used: {{ nats_tls_ca_file }}"

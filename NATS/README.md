@@ -42,12 +42,15 @@ The playbook exposes NATS on the host's **default external IPv4 interface**, bas
 - `nats_external_address`: defaults to `ansible_default_ipv4.address`
 - `nats_client_host`: defaults to `nats_external_address`
 - `nats_client_port`: defaults to `4222`
+- `nats_monitor_host`: defaults to `nats_client_host`
+- `nats_monitor_port`: defaults to `8222`
 
-NATS is **not** configured to listen on `0.0.0.0`. It binds to the detected external IPv4 address, for example:
+NATS is **not** configured to listen on `0.0.0.0`. The client and monitoring listeners bind to the detected external IPv4 address, for example:
 
 ```text
 host: "10.0.10.25"
 port: 4222
+http: "10.0.10.25:8222"
 ```
 
 If your true external NIC is not the default-route interface, override it explicitly:
@@ -67,9 +70,9 @@ The playbook manages firewalld by default:
 - Allows only inbound SSH and NATS traffic:
   - `ssh`
   - `4222/tcp`
+  - `8222/tcp`
 - Adds the NATS route port `6222/tcp` only when `nats_cluster_enabled=true`.
-- Adds the monitoring port `8222/tcp` only when `nats_open_monitoring_firewall=true`.
-- Keeps monitoring bound to `127.0.0.1:8222` and does **not** open it externally.
+- Opens the monitoring port `8222/tcp` when `nats_open_monitoring_firewall=true`, which is the default.
 - Removes other services, ports, source ports, protocols, forward ports, rich rules, and masquerading from the managed external zone.
 
 This is intentionally strict. Existing inbound services such as Cockpit, HTTP, HTTPS, database listeners, or custom firewalld rules in the managed external zone will be removed unless you change the firewall variables before running the playbook. On Debian, this baseline standardizes on `firewalld` as the local firewall manager.
@@ -83,9 +86,11 @@ nats_firewall_allowed_services:
   - ssh
 nats_firewall_nats_ports:
   - 4222/tcp
+  - 8222/tcp
 nats_firewall_allowed_ports:
   - 4222/tcp
-nats_open_monitoring_firewall: false
+  - 8222/tcp
+nats_open_monitoring_firewall: true
 ```
 
 ## What the playbook does
@@ -94,6 +99,7 @@ nats_open_monitoring_firewall: false
 - Verifies that the service account is exactly `nats:nats`.
 - Verifies that firewall allowlists contain only SSH and the enabled NATS ports.
 - Verifies that a usable non-loopback default IPv4 interface/address exists.
+- Verifies that externally exposed monitoring binds to the same address as the NATS client listener.
 - Installs required OS packages.
 - Installs a pinned NATS Server release and NATS CLI release.
 - Creates the `nats` group and creates the non-root `nats` service user only when it does not already exist.
@@ -106,8 +112,8 @@ nats_open_monitoring_firewall: false
 - Creates and enables a hardened `systemd` service.
 - Starts NATS automatically after reboot.
 - Binds NATS client traffic to the external IPv4 address only.
+- Binds NATS monitoring traffic to the same external IPv4 address by default.
 - Configures firewalld to allow inbound SSH and NATS traffic only on the external zone.
-- Keeps monitoring bound to `127.0.0.1:8222` by default.
 - Installs logrotate configuration for NATS logs.
 - Validates that `nats-server` is active and not running as root.
 - Validates that the `systemd` unit is enabled for reboot persistence and configured with `User=nats` and `Group=nats`.
@@ -122,6 +128,7 @@ sudo systemctl is-enabled nats
 sudo journalctl -u nats -n 100 --no-pager
 sudo cat /root/nats-production-secrets.env
 sudo ss -H -ltn sport = :4222
+sudo ss -H -ltn sport = :8222
 sudo firewall-cmd --zone=nats-external --list-all
 ```
 
@@ -155,6 +162,7 @@ nats --server tls://<external-ip-or-dns>:4222 \
 - The systemd unit is enabled and uses `Restart=on-failure`, so the service survives reboot and abnormal failure.
 - TLS is enabled by default. The default self-signed mode creates a local bootstrap CA and server certificate; replace these with enterprise PKI for formal production.
 - NATS account passwords are generated once, stored root-only in `/root/nats-production-secrets.env`, and stored in the NATS config as bcrypt hashes.
-- Monitoring is bound to `127.0.0.1:8222` and is not opened in firewalld by default.
+- Monitoring is bound to the same external IPv4 address as the NATS client listener and is opened in firewalld by default.
+- NATS monitoring endpoints are unauthenticated HTTP endpoints; expose them only on trusted networks and restrict upstream cloud or network security rules accordingly.
 - Single-node local NATS can be hardened, but it is not highly available. For HA, use a separate clustered deployment model with at least three servers.
 - Set `nats_server_sha256` and `nats_cli_sha256` to approved artifact hashes before regulated production rollout.
