@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Local-only bootstrap helper for Oracle Linux 9.
+# Local-only bootstrap helper for Oracle Linux 9
 # Purpose:
 #   1. Verify this host is Oracle Linux 9.
 #   2. Install ansible-core and required base tooling using dnf.
