@@ -120,38 +120,96 @@ nats_open_monitoring_firewall: true
 - Validates that NATS is not listening on a wildcard address.
 - Validates the runtime firewalld policy contains only the allowed SSH service and NATS ports.
 
-## Useful commands after installation
+## Verify the installation
+
+Run these checks on the NATS server first:
 
 ```bash
-sudo systemctl status nats --no-pager
+sudo systemctl is-active nats
 sudo systemctl is-enabled nats
+ps -o user,pid,cmd -C nats-server
 sudo journalctl -u nats -n 100 --no-pager
-sudo cat /root/nats-production-secrets.env
 sudo ss -H -ltn sport = :4222
 sudo ss -H -ltn sport = :8222
 sudo firewall-cmd --zone=nats-external --list-all
 ```
 
-For a TLS client connection from the same host, source the generated credentials and connect to the external listener address:
+Expected results:
+
+- `systemctl is-active nats` returns `active`.
+- `systemctl is-enabled nats` returns `enabled`.
+- `ps` shows `nats-server` running as user `nats`, not `root`.
+- `ss` shows `4222` and `8222` listening on the host's external IPv4 address.
+- `firewall-cmd` shows service `ssh` and ports `4222/tcp 8222/tcp` in the `nats-external` zone.
+
+Check the local monitoring endpoint from the NATS server:
+
+```bash
+SERVER_IP="$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')"
+curl -fsS "http://${SERVER_IP}:8222/healthz"
+```
+
+Check a TLS NATS client connection from the NATS server:
 
 ```bash
 sudo bash -c 'source /root/nats-production-secrets.env; \
-  EXTERNAL_IP="$(ip -4 route get 1.1.1.1 | awk "{for(i=1;i<=NF;i++) if(\$i==\"src\"){print \$(i+1); exit}}")"; \
-  nats --server "tls://${EXTERNAL_IP}:4222" \
+  SERVER_IP="$(ip -4 route get 1.1.1.1 | awk "{for(i=1;i<=NF;i++) if(\$i==\"src\"){print \$(i+1); exit}}")"; \
+  nats --server "tls://${SERVER_IP}:4222" \
        --tlsca /etc/nats/tls/ca.crt \
        --user "$NATS_APP_USER" \
        --password "$NATS_APP_PASSWORD" \
-       server check'
+       server check connection'
 ```
 
-For an external TLS client connection, use the external IP or DNS name that matches your certificate/SANs:
+Check JetStream from the NATS server:
+
+```bash
+sudo bash -c 'source /root/nats-production-secrets.env; \
+  SERVER_IP="$(ip -4 route get 1.1.1.1 | awk "{for(i=1;i<=NF;i++) if(\$i==\"src\"){print \$(i+1); exit}}")"; \
+  nats --server "tls://${SERVER_IP}:4222" \
+       --tlsca /etc/nats/tls/ca.crt \
+       --user "$NATS_APP_USER" \
+       --password "$NATS_APP_PASSWORD" \
+       server check jetstream'
+```
+
+From another machine on a network that should be allowed to reach this server, check external TCP reachability:
+
+```bash
+SERVER_IP=<nats-server-ip-or-dns>
+nc -vz "$SERVER_IP" 4222
+nc -vz "$SERVER_IP" 8222
+curl -fsS "http://${SERVER_IP}:8222/healthz"
+```
+
+For an external TLS NATS client connection, use the external IP or DNS name that matches your certificate/SANs. Copy the bootstrap CA from `/etc/nats/tls/ca.crt` on the server, or use your enterprise CA if you replaced the bootstrap certificate:
 
 ```bash
 nats --server tls://<external-ip-or-dns>:4222 \
      --tlsca ca.crt \
      --user '<app-user>' \
      --password '<app-password>' \
-     server check
+     server check connection
+```
+
+If you want to prove publish/subscribe flow end-to-end from a client host, start a subscription in one terminal:
+
+```bash
+nats --server tls://<external-ip-or-dns>:4222 \
+     --tlsca ca.crt \
+     --user '<app-user>' \
+     --password '<app-password>' \
+     sub cuillin.test
+```
+
+Then publish from another terminal:
+
+```bash
+nats --server tls://<external-ip-or-dns>:4222 \
+     --tlsca ca.crt \
+     --user '<app-user>' \
+     --password '<app-password>' \
+     pub cuillin.test 'hello from external client'
 ```
 
 ## Production notes
