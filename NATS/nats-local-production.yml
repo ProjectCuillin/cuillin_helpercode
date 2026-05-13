@@ -441,7 +441,9 @@
           printf '%s\n' 'DNS.2 = {{ ansible_hostname | default("localhost") }}'
           printf '%s\n' 'DNS.3 = localhost'
           printf '%s\n' 'IP.1 = 127.0.0.1'
-          {% if nats_external_address | length > 0 %}printf '%s\n' 'IP.2 = {{ nats_external_address }}'{% endif %}
+          {% if nats_external_address | length > 0 %}
+          printf '%s\n' 'IP.2 = {{ nats_external_address }}'
+          {% endif %}
         } > "${tmpdir}/server.cnf"
 
         openssl genrsa -out "{{ nats_tls_ca_key_file }}" 4096
