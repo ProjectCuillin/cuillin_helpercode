@@ -535,13 +535,13 @@
             }
 
             {{ nats_app_account }} {
-              {% if nats_enable_jetstream | bool %}jetstream: enabled{% endif %}
+              {% if nats_enable_jetstream | bool %}jetstream: enabled,{% endif %}
               users: [
                 {
-                  user: "{{ nats_app_user }}"
-                  password: "{{ nats_app_password_hash_effective }}"
+                  user: "{{ nats_app_user }}",
+                  password: "{{ nats_app_password_hash_effective }}",
                   permissions: {
-                    publish: { allow: [">"] }
+                    publish: { allow: [">"] },
                     subscribe: { allow: [">"] }
                   }
                 }
