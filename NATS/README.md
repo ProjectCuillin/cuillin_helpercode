@@ -93,6 +93,73 @@ nats_firewall_allowed_ports:
 nats_open_monitoring_firewall: true
 ```
 
+## TLS certificates
+
+TLS is enabled by default. The playbook supports three certificate modes through `nats_tls_certificate_mode`:
+
+- `auto`: Uses provided certificate files when all required files are present; otherwise generates a local self-signed bootstrap CA and server certificate. This is the default.
+- `provided`: Requires CA-issued or official certificate files and fails if they are missing.
+- `self_signed`: Uses or generates the local self-signed bootstrap CA and server certificate.
+
+The required runtime files are:
+
+```yaml
+nats_tls_ca_file: /etc/nats/tls/ca.crt
+nats_tls_cert_file: /etc/nats/tls/server.crt
+nats_tls_key_file: /etc/nats/tls/server.key
+```
+
+In `auto` mode, the playbook uses those files when all three already exist. If none exist, it generates self-signed files. If only some of the files exist, the playbook fails so it does not accidentally mix an official certificate with generated material.
+
+For self-signed TLS, copy **only the CA certificate** from the server to your workstation. The file you need is:
+
+```text
+/etc/nats/tls/ca.crt
+```
+
+Do not copy `/etc/nats/tls/server.key` or `/etc/nats/tls/ca.key` to your workstation. Those are private keys. You also normally do not use `server.crt` with the NATS CLI; the client needs the CA certificate that signed the server certificate.
+
+One safe way to copy the self-signed CA certificate to your workstation is:
+
+```bash
+ssh <admin-user>@<nats-server> 'sudo cat /etc/nats/tls/ca.crt' > nats-ca.crt
+chmod 0644 nats-ca.crt
+```
+
+Then use that CA certificate with the remote NATS CLI:
+
+```bash
+nats --server tls://<external-ip-or-dns>:4222 \
+     --tlsca ./nats-ca.crt \
+     --user '<app-user>' \
+     --password '<app-password>' \
+     server check connection
+```
+
+The app username and password are generated on the server in `/root/nats-production-secrets.env`.
+
+To use a CA-issued or official certificate, make sure the certificate contains a SAN for the external DNS name or IP address clients will use. Then either preinstall the files at the runtime paths above, or provide source paths for the playbook to copy:
+
+```bash
+sudo ANSIBLE_EXTRA_ARGS="-e nats_tls_certificate_mode=provided \
+  -e nats_tls_provided_cert_source=/root/nats-certs/fullchain.pem \
+  -e nats_tls_provided_key_source=/root/nats-certs/privkey.pem \
+  -e nats_tls_provided_ca_source=/root/nats-certs/ca-chain.pem" \
+  bash bootstrap-nats-local.sh
+```
+
+The playbook copies those source files into `/etc/nats/tls/server.crt`, `/etc/nats/tls/server.key`, and `/etc/nats/tls/ca.crt`, then sets service-readable permissions for the `nats` user.
+
+If the official certificate chains to a public CA trusted by your workstation, the NATS CLI may work without `--tlsca`. For private enterprise CAs, use the enterprise CA bundle with `--tlsca`:
+
+```bash
+nats --server tls://<external-dns-name>:4222 \
+     --tlsca ./enterprise-ca-chain.pem \
+     --user '<app-user>' \
+     --password '<app-password>' \
+     server check connection
+```
+
 ## What the playbook does
 
 - Verifies the machine is Oracle Linux or Debian.
@@ -105,7 +172,7 @@ nats_open_monitoring_firewall: true
 - Creates the `nats` group and creates the non-root `nats` service user only when it does not already exist.
 - Reuses an existing non-root `nats` user without changing its home directory, shell, or comment.
 - Creates protected directories under `/etc/nats`, `/var/lib/nats`, and `/var/log/nats`.
-- Enables TLS by default using a local bootstrap CA and server certificate.
+- Enables TLS by default, using provided CA-issued certificate files when present or generating a local bootstrap CA and server certificate when not.
 - Generates NATS account passwords once and stores them root-only in `/root/nats-production-secrets.env`.
 - Configures JetStream storage under `/var/lib/nats/jetstream`.
 - Validates the generated NATS configuration as the `nats` user.
@@ -182,11 +249,11 @@ nc -vz "$SERVER_IP" 8222
 curl -fsS "http://${SERVER_IP}:8222/healthz"
 ```
 
-For an external TLS NATS client connection, use the external IP or DNS name that matches your certificate/SANs. Copy the bootstrap CA from `/etc/nats/tls/ca.crt` on the server, or use your enterprise CA if you replaced the bootstrap certificate:
+For an external TLS NATS client connection, use the external IP or DNS name that matches your certificate/SANs. With the default self-signed bootstrap certificate, use the `nats-ca.crt` file copied in the TLS section above. With an official or enterprise certificate, use the issuing CA bundle when it is not already trusted by your workstation:
 
 ```bash
 nats --server tls://<external-ip-or-dns>:4222 \
-     --tlsca ca.crt \
+     --tlsca ./nats-ca.crt \
      --user '<app-user>' \
      --password '<app-password>' \
      server check connection
@@ -196,7 +263,7 @@ If you want to prove publish/subscribe flow end-to-end from a client host, start
 
 ```bash
 nats --server tls://<external-ip-or-dns>:4222 \
-     --tlsca ca.crt \
+     --tlsca ./nats-ca.crt \
      --user '<app-user>' \
      --password '<app-password>' \
      sub cuillin.test
@@ -206,7 +273,7 @@ Then publish from another terminal:
 
 ```bash
 nats --server tls://<external-ip-or-dns>:4222 \
-     --tlsca ca.crt \
+     --tlsca ./nats-ca.crt \
      --user '<app-user>' \
      --password '<app-password>' \
      pub cuillin.test 'hello from external client'
@@ -218,7 +285,7 @@ nats --server tls://<external-ip-or-dns>:4222 \
 - The playbook fails if `nats_user` or `nats_group` is changed away from `nats`.
 - If a `nats` user already exists, the playbook validates that it is not uid 0 and leaves the account metadata untouched.
 - The systemd unit is enabled and uses `Restart=on-failure`, so the service survives reboot and abnormal failure.
-- TLS is enabled by default. The default self-signed mode creates a local bootstrap CA and server certificate; replace these with enterprise PKI for formal production.
+- TLS is enabled by default. In `auto` mode, the playbook uses complete provided certificate files when present and otherwise creates a local bootstrap CA and server certificate.
 - NATS account passwords are generated once, stored root-only in `/root/nats-production-secrets.env`, and stored in the NATS config as bcrypt hashes.
 - Monitoring is bound to the same external IPv4 address as the NATS client listener and is opened in firewalld by default.
 - NATS monitoring endpoints are unauthenticated HTTP endpoints; expose them only on trusted networks and restrict upstream cloud or network security rules accordingly.

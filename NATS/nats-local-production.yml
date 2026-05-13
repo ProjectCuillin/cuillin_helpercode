@@ -54,9 +54,13 @@
     nats_max_pending: "64Mb"
     nats_max_connections: 65536
 
-    # Production should use CA-issued certificates. The self-signed mode below creates a local CA and server cert
-    # so the deployment is encrypted by default and can be replaced later by enterprise PKI artifacts.
+    # TLS certificate mode:
+    # - auto: use provided certificate files when present; otherwise generate a local self-signed bootstrap CA/cert.
+    # - provided: require provided CA-issued/official certificate files.
+    # - self_signed: use/generate the local self-signed bootstrap CA/cert.
     nats_tls_enabled: true
+    nats_tls_certificate_mode: auto
+    # Legacy compatibility: setting this to false is treated like nats_tls_certificate_mode=provided.
     nats_tls_self_signed: true
     nats_tls_verify_clients: false
     nats_tls_ca_common_name: "NATS Local Bootstrap CA"
@@ -67,6 +71,11 @@
     nats_tls_key_file: /etc/nats/tls/server.key
     nats_tls_cert_days: 825
     nats_tls_ca_days: 3650
+    # Optional source files for CA-issued/official certificates. When all three are set, the playbook copies them
+    # into nats_tls_ca_file, nats_tls_cert_file, and nats_tls_key_file before deciding the effective TLS mode.
+    nats_tls_provided_ca_source: ""
+    nats_tls_provided_cert_source: ""
+    nats_tls_provided_key_source: ""
 
     # This baseline uses NATS accounts with bcrypt-hashed passwords in the server config.
     # For larger multi-team estates, consider NATS decentralized JWT/operator mode and manage identities with nsc.
@@ -141,6 +150,11 @@
       when:
         - ansible_distribution == 'Debian'
         - ansible_pkg_mgr != 'apt'
+
+    - name: Fail when TLS certificate mode is invalid
+      ansible.builtin.fail:
+        msg: "nats_tls_certificate_mode must be one of: auto, provided, self_signed. Detected '{{ nats_tls_certificate_mode }}'."
+      when: nats_tls_certificate_mode not in ['auto', 'provided', 'self_signed']
 
     - name: Fail when NATS service account is not the dedicated nats user
       ansible.builtin.fail:
@@ -406,7 +420,51 @@
         nats_app_password_hash_effective: "{{ nats_generated_hashes.stdout_lines[1] }}"
       no_log: true
 
-    - name: Check TLS certificate presence when not generating self-signed certificates
+    - name: Count provided TLS certificate source files
+      ansible.builtin.set_fact:
+        nats_tls_provided_source_count: >-
+          {{
+            [
+              nats_tls_provided_ca_source,
+              nats_tls_provided_cert_source,
+              nats_tls_provided_key_source
+            ] | reject('equalto', '') | list | length
+          }}
+      when: nats_tls_enabled | bool
+
+    - name: Fail when only some provided TLS certificate source files are set
+      ansible.builtin.fail:
+        msg: "Set all provided TLS source files or none of them: nats_tls_provided_ca_source, nats_tls_provided_cert_source, and nats_tls_provided_key_source."
+      when:
+        - nats_tls_enabled | bool
+        - nats_tls_provided_source_count | int not in [0, 3]
+
+    - name: Fail when provided TLS source files are set in self-signed mode
+      ansible.builtin.fail:
+        msg: "Provided TLS source files require nats_tls_certificate_mode=auto or provided. Detected nats_tls_certificate_mode=self_signed."
+      when:
+        - nats_tls_enabled | bool
+        - nats_tls_certificate_mode == 'self_signed'
+        - nats_tls_provided_source_count | int > 0
+
+    - name: Install provided TLS certificate files
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: "{{ nats_group }}"
+        mode: "{{ item.mode }}"
+        remote_src: true
+      loop:
+        - { src: "{{ nats_tls_provided_ca_source }}", dest: "{{ nats_tls_ca_file }}", mode: "0644" }
+        - { src: "{{ nats_tls_provided_cert_source }}", dest: "{{ nats_tls_cert_file }}", mode: "0644" }
+        - { src: "{{ nats_tls_provided_key_source }}", dest: "{{ nats_tls_key_file }}", mode: "0640" }
+      when:
+        - nats_tls_enabled | bool
+        - nats_tls_provided_source_count | int == 3
+      notify: Restart nats
+
+    - name: Check TLS certificate file presence
       ansible.builtin.stat:
         path: "{{ item }}"
       register: nats_tls_files
@@ -414,15 +472,41 @@
         - "{{ nats_tls_cert_file }}"
         - "{{ nats_tls_key_file }}"
         - "{{ nats_tls_ca_file }}"
-      when: nats_tls_enabled | bool and not (nats_tls_self_signed | bool)
+      when: nats_tls_enabled | bool
 
-    - name: Fail when TLS is enabled but certificate files are missing
+    - name: Count installed TLS certificate files
+      ansible.builtin.set_fact:
+        nats_tls_file_count: "{{ nats_tls_files.results | selectattr('stat.exists', 'equalto', true) | list | length }}"
+      when: nats_tls_enabled | bool
+
+    - name: Fail when only some TLS certificate files are installed
       ansible.builtin.fail:
-        msg: "TLS is enabled and nats_tls_self_signed=false, but one or more TLS files are missing. Provide cert/key/CA under {{ nats_tls_dir }} or set nats_tls_self_signed=true."
+        msg: "TLS is enabled but only some certificate files are installed. Provide all of {{ nats_tls_ca_file }}, {{ nats_tls_cert_file }}, and {{ nats_tls_key_file }}, or remove the partial files so self-signed certificates can be generated."
       when:
         - nats_tls_enabled | bool
-        - not (nats_tls_self_signed | bool)
-        - nats_tls_files.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+        - nats_tls_file_count | int not in [0, 3]
+
+    - name: Fail when provided TLS certificate mode is requested but files are missing
+      ansible.builtin.fail:
+        msg: "TLS certificate mode is provided, but certificate files are missing. Provide {{ nats_tls_ca_file }}, {{ nats_tls_cert_file }}, and {{ nats_tls_key_file }}, or set nats_tls_certificate_mode=auto/self_signed."
+      when:
+        - nats_tls_enabled | bool
+        - nats_tls_certificate_mode == 'provided' or not (nats_tls_self_signed | bool)
+        - nats_tls_file_count | int != 3
+
+    - name: Select effective TLS certificate mode
+      ansible.builtin.set_fact:
+        nats_tls_effective_certificate_mode: >-
+          {{
+            'provided'
+            if (
+              nats_tls_certificate_mode == 'provided'
+              or not (nats_tls_self_signed | bool)
+              or (nats_tls_certificate_mode == 'auto' and (nats_tls_file_count | int) == 3)
+            )
+            else 'self_signed'
+          }}
+      when: nats_tls_enabled | bool
 
     - name: Generate local CA and server certificate for bootstrap TLS
       ansible.builtin.shell: |
@@ -484,9 +568,23 @@
         chmod 0640 "{{ nats_tls_key_file }}" "{{ nats_tls_ca_key_file }}"
       args:
         executable: /bin/bash
-        creates: "{{ nats_tls_cert_file }}"
-      when: nats_tls_enabled | bool and nats_tls_self_signed | bool
+      when:
+        - nats_tls_enabled | bool
+        - nats_tls_effective_certificate_mode == 'self_signed'
+        - nats_tls_file_count | int != 3
       notify: Restart nats
+
+    - name: Ensure NATS TLS certificate files have service-readable permissions
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: root
+        group: "{{ nats_group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ nats_tls_ca_file }}", mode: "0644" }
+        - { path: "{{ nats_tls_cert_file }}", mode: "0644" }
+        - { path: "{{ nats_tls_key_file }}", mode: "0640" }
+      when: nats_tls_enabled | bool
 
     - name: Install NATS server configuration
       ansible.builtin.copy:
@@ -906,4 +1004,4 @@
           - "External NIC/firewall zone: {{ nats_external_interface }} / {{ nats_firewall_zone }}; inbound allowed services={{ nats_firewall_allowed_services }}, ports={{ nats_firewall_allowed_ports }}."
           - "Monitoring endpoint is bound to {{ nats_monitor_host }}:{{ nats_monitor_port }} and exposed through firewalld when nats_open_monitoring_firewall=true."
           - "Generated credentials are stored root-only in {{ nats_secret_file }}. Move these to Ansible Vault or your enterprise secret store."
-          - "Bootstrap CA for clients, if self-signed TLS is used: {{ nats_tls_ca_file }}"
+          - "TLS certificate mode={{ nats_tls_effective_certificate_mode | default('disabled') }}; client CA file={{ nats_tls_ca_file if (nats_tls_enabled | bool) else 'n/a' }}."
