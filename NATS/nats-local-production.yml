@@ -209,7 +209,13 @@
         system: true
         state: present
 
-    - name: Create NATS service user
+    - name: Check whether NATS service user already exists
+      ansible.builtin.command: "getent passwd {{ nats_user }}"
+      register: nats_existing_user
+      changed_when: false
+      failed_when: nats_existing_user.rc not in [0, 2]
+
+    - name: Create NATS service user when absent
       ansible.builtin.user:
         name: "{{ nats_user }}"
         group: "{{ nats_group }}"
@@ -219,6 +225,14 @@
         shell: "{{ nats_nologin_shell }}"
         comment: "NATS Server service account"
         state: present
+      when: nats_existing_user.rc != 0
+
+    - name: Validate existing NATS service user is not uid 0
+      ansible.builtin.assert:
+        that:
+          - (nats_existing_user.stdout.split(':')[2] | int) != 0
+        fail_msg: "Existing user '{{ nats_user }}' has uid 0. Refusing to run NATS with a root-equivalent account."
+      when: nats_existing_user.rc == 0
 
     - name: Create NATS directories
       ansible.builtin.file:
@@ -552,7 +566,7 @@
       notify: Restart nats
 
     - name: Validate NATS server configuration as nats user
-      ansible.builtin.command: "/usr/sbin/runuser -u {{ nats_user }} -- /usr/local/bin/nats-server -c {{ nats_config_file }} -t"
+      ansible.builtin.command: "/usr/sbin/runuser -u {{ nats_user }} -g {{ nats_group }} -- /usr/local/bin/nats-server -c {{ nats_config_file }} -t"
       changed_when: false
 
     - name: Install systemd unit for NATS

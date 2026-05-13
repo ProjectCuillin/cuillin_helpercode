@@ -96,7 +96,8 @@ nats_open_monitoring_firewall: false
 - Verifies that a usable non-loopback default IPv4 interface/address exists.
 - Installs required OS packages.
 - Installs a pinned NATS Server release and NATS CLI release.
-- Creates a dedicated non-root `nats` system user and group.
+- Creates the `nats` group and creates the non-root `nats` service user only when it does not already exist.
+- Reuses an existing non-root `nats` user without changing its home directory, shell, or comment.
 - Creates protected directories under `/etc/nats`, `/var/lib/nats`, and `/var/log/nats`.
 - Enables TLS by default using a local bootstrap CA and server certificate.
 - Generates NATS account passwords once and stores them root-only in `/root/nats-production-secrets.env`.
@@ -150,6 +151,7 @@ nats --server tls://<external-ip-or-dns>:4222 \
 
 - The NATS service runs as the dedicated `nats` account, not as root.
 - The playbook fails if `nats_user` or `nats_group` is changed away from `nats`.
+- If a `nats` user already exists, the playbook validates that it is not uid 0 and leaves the account metadata untouched.
 - The systemd unit is enabled and uses `Restart=on-failure`, so the service survives reboot and abnormal failure.
 - TLS is enabled by default. The default self-signed mode creates a local bootstrap CA and server certificate; replace these with enterprise PKI for formal production.
 - NATS account passwords are generated once, stored root-only in `/root/nats-production-secrets.env`, and stored in the NATS config as bcrypt hashes.
