@@ -1,6 +1,6 @@
-# Oracle Linux 9 local NATS production baseline
+# Local NATS production baseline
 
-This package is for a **local-only** installation. It installs and configures a **standalone** NATS Server on the same Oracle Linux 9 host where you run the bootstrap script.
+This package is for a **local-only** installation. It installs and configures a **standalone** NATS Server on the same Oracle Linux or Debian host where you run the bootstrap script.
 
 There is no `inventory.ini` file and no remote SSH execution path. The helper always runs Ansible with:
 
@@ -10,8 +10,16 @@ There is no `inventory.ini` file and no remote SSH execution path. The helper al
 
 ## Files
 
-- `bootstrap-nats-local.sh` installs `ansible-core` and required base packages on the local Oracle Linux 9 host, then runs the playbook locally.
-- `nats-ol9-local-production.yml` installs and hardens NATS Server and the NATS CLI on the local host.
+- `bootstrap-nats-local.sh` detects Oracle Linux versus Debian, installs `ansible-core` and required base packages with the native package manager, then runs the playbook locally.
+- `nats-local-production.yml` installs and hardens NATS Server and the NATS CLI on the local host.
+- `nats-ol9-local-production.yml` is a backward-compatible wrapper that imports `nats-local-production.yml`.
+
+## Supported platforms
+
+- Oracle Linux hosts using `dnf`.
+- Debian hosts using `apt`.
+
+The bootstrap script and playbook fail early on other operating systems.
 
 ## Local install
 
@@ -54,30 +62,37 @@ sudo ANSIBLE_EXTRA_ARGS='-e nats_external_interface=ens3 -e nats_external_addres
 The playbook manages firewalld by default:
 
 - Starts and enables `firewalld`.
-- Assigns the detected external interface to the `public` zone.
-- Sets the `public` zone target to `DROP`.
-- Allows only inbound SSH and NATS client traffic:
+- Assigns the detected external interface to the dedicated `nats-external` zone.
+- Sets the `nats-external` zone target to `DROP`.
+- Allows only inbound SSH and NATS traffic:
   - `ssh`
   - `4222/tcp`
+- Adds the NATS route port `6222/tcp` only when `nats_cluster_enabled=true`.
+- Adds the monitoring port `8222/tcp` only when `nats_open_monitoring_firewall=true`.
 - Keeps monitoring bound to `127.0.0.1:8222` and does **not** open it externally.
-- Removes other services, ports, source ports, protocols, forward ports, rich rules, and masquerading from the managed external zone when `nats_firewall_purge_extra_rules=true`.
+- Removes other services, ports, source ports, protocols, forward ports, rich rules, and masquerading from the managed external zone.
 
-This is intentionally strict. Existing inbound services such as Cockpit, HTTP, HTTPS, database listeners, or custom firewalld rules in the managed external zone will be removed unless you change the firewall variables before running the playbook.
+This is intentionally strict. Existing inbound services such as Cockpit, HTTP, HTTPS, database listeners, or custom firewalld rules in the managed external zone will be removed unless you change the firewall variables before running the playbook. On Debian, this baseline standardizes on `firewalld` as the local firewall manager.
 
 Relevant variables:
 
 ```yaml
 nats_manage_firewall: true
-nats_firewall_zone: public
-nats_firewall_purge_extra_rules: true
+nats_firewall_zone: nats-external
 nats_firewall_allowed_services:
   - ssh
+nats_firewall_nats_ports:
+  - 4222/tcp
+nats_firewall_allowed_ports:
+  - 4222/tcp
 nats_open_monitoring_firewall: false
 ```
 
 ## What the playbook does
 
-- Verifies the machine is Oracle Linux 9.
+- Verifies the machine is Oracle Linux or Debian.
+- Verifies that the service account is exactly `nats:nats`.
+- Verifies that firewall allowlists contain only SSH and the enabled NATS ports.
 - Verifies that a usable non-loopback default IPv4 interface/address exists.
 - Installs required OS packages.
 - Installs a pinned NATS Server release and NATS CLI release.
@@ -86,6 +101,7 @@ nats_open_monitoring_firewall: false
 - Enables TLS by default using a local bootstrap CA and server certificate.
 - Generates NATS account passwords once and stores them root-only in `/root/nats-production-secrets.env`.
 - Configures JetStream storage under `/var/lib/nats/jetstream`.
+- Validates the generated NATS configuration as the `nats` user.
 - Creates and enables a hardened `systemd` service.
 - Starts NATS automatically after reboot.
 - Binds NATS client traffic to the external IPv4 address only.
@@ -93,8 +109,9 @@ nats_open_monitoring_firewall: false
 - Keeps monitoring bound to `127.0.0.1:8222` by default.
 - Installs logrotate configuration for NATS logs.
 - Validates that `nats-server` is active and not running as root.
+- Validates that the `systemd` unit is enabled for reboot persistence and configured with `User=nats` and `Group=nats`.
 - Validates that NATS is not listening on a wildcard address.
-- Validates the runtime firewalld policy.
+- Validates the runtime firewalld policy contains only the allowed SSH service and NATS ports.
 
 ## Useful commands after installation
 
@@ -104,7 +121,7 @@ sudo systemctl is-enabled nats
 sudo journalctl -u nats -n 100 --no-pager
 sudo cat /root/nats-production-secrets.env
 sudo ss -H -ltn sport = :4222
-sudo firewall-cmd --zone=public --list-all
+sudo firewall-cmd --zone=nats-external --list-all
 ```
 
 For a TLS client connection from the same host, source the generated credentials and connect to the external listener address:
@@ -132,6 +149,7 @@ nats --server tls://<external-ip-or-dns>:4222 \
 ## Production notes
 
 - The NATS service runs as the dedicated `nats` account, not as root.
+- The playbook fails if `nats_user` or `nats_group` is changed away from `nats`.
 - The systemd unit is enabled and uses `Restart=on-failure`, so the service survives reboot and abnormal failure.
 - TLS is enabled by default. The default self-signed mode creates a local bootstrap CA and server certificate; replace these with enterprise PKI for formal production.
 - NATS account passwords are generated once, stored root-only in `/root/nats-production-secrets.env`, and stored in the NATS config as bcrypt hashes.
