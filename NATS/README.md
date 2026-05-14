@@ -187,6 +187,43 @@ nats --server tls://<external-dns-name>:4222 \
 - Validates that NATS is not listening on a wildcard address.
 - Validates the runtime firewalld policy contains only the allowed SSH service and NATS ports.
 
+## Credentials
+
+The playbook generates NATS account passwords once and stores them on the server in:
+
+```text
+/root/nats-production-secrets.env
+```
+
+This file is root-only and contains both the cleartext passwords for clients and the bcrypt hashes used in the server config. The important client values are:
+
+- `NATS_APP_USER`: application user, default `nats_app`.
+- `NATS_APP_PASSWORD`: password for the application user.
+- `NATS_SYSTEM_USER`: system account user, default `nats_sys`.
+- `NATS_SYSTEM_PASSWORD`: password for the system account user.
+
+Use the app user for normal client connections:
+
+```bash
+sudo bash -c 'source /root/nats-production-secrets.env; \
+  printf "NATS_APP_USER=%s\nNATS_APP_PASSWORD=%s\n" "$NATS_APP_USER" "$NATS_APP_PASSWORD"'
+```
+
+Use the system user only for system-account operations and monitoring workflows that require it:
+
+```bash
+sudo bash -c 'source /root/nats-production-secrets.env; \
+  printf "NATS_SYSTEM_USER=%s\nNATS_SYSTEM_PASSWORD=%s\n" "$NATS_SYSTEM_USER" "$NATS_SYSTEM_PASSWORD"'
+```
+
+To see all generated values, including the bcrypt hashes used by the NATS server:
+
+```bash
+sudo cat /root/nats-production-secrets.env
+```
+
+Treat this file as a secret. Move these credentials to Ansible Vault or your enterprise secret store for long-lived environments.
+
 ## Verify the installation
 
 Run these checks on the NATS server first:
