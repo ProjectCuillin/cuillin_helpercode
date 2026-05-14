@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+#
+# Developer: Johan Louwers
+# License: Apache License 2.0; see the repository LICENSE file.
+# SPDX-License-Identifier: Apache-2.0
+
 set -euo pipefail
 
 # Local-only bootstrap helper for Oracle Linux and Debian
