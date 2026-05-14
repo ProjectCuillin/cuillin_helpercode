@@ -140,6 +140,20 @@ The app username and password are generated on the server in `/root/nats-product
 
 To use a CA-issued or official certificate, make sure the certificate contains a SAN for the external DNS name or IP address clients will use. Then either preinstall the files at the runtime paths above, or provide source paths for the playbook to copy:
 
+The example uses these common PEM file names:
+
+- `fullchain.pem`: the NATS server certificate plus any intermediate CA certificates needed to build trust to the root CA. This becomes `/etc/nats/tls/server.crt`.
+- `privkey.pem`: the private key matching the NATS server certificate. This becomes `/etc/nats/tls/server.key` and must stay secret.
+- `ca-chain.pem`: the CA chain clients should trust when verifying the NATS server certificate. This becomes `/etc/nats/tls/ca.crt`.
+
+Common ways to obtain these files:
+
+- Let's Encrypt with Certbot commonly writes `fullchain.pem` and `privkey.pem` under `/etc/letsencrypt/live/<dns-name>/`. The CA chain can usually be `chain.pem` from the same directory; copy or reference it as `ca-chain.pem`.
+- Enterprise or internal PKI teams usually provide a server certificate, its private key, and one or more CA/intermediate certificates. Combine the intermediate/root CA certificates into a single `ca-chain.pem` file if they are provided separately.
+- Commercial CAs usually provide the server certificate and a CA bundle file. Use the CA bundle as `ca-chain.pem`; use the private key generated with your CSR as `privkey.pem`.
+
+The certificate subject/SAN must match the client URL you use, for example `tls://nats.example.com:4222`. If clients connect by IP address, the certificate must include that IP address as an IP SAN.
+
 ```bash
 sudo ANSIBLE_EXTRA_ARGS="-e nats_tls_certificate_mode=provided \
   -e nats_tls_provided_cert_source=/root/nats-certs/fullchain.pem \
