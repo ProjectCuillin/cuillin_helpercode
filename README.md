@@ -1,6 +1,6 @@
 # Cuillin Helper Code
 
-This repository contains a growing collection of installation scripts, helper utilities, test scripts, and other useful tools supporting projects under the [Cuillin](https://github.com/cuillin-project) umbrella.
+This repository contains a growing collection of installation scripts, helper utilities, test scripts, and other useful tools supporting projects under the [Cuillin](https://github.com/ProjectCuillin) umbrella.
 The goal is to provide reusable scripts and configurations that simplify common development, deployment, and testing workflows.
 
 ## Repository Structure
@@ -25,7 +25,7 @@ For a full description and instructions, see the [NATS/README.md](./NATS/README.
 
 1. Clone this repository:
     ```sh
-    git clone https://github.com/cuillin-project/cuillin_helpercode.git
+    git clone https://github.com/ProjectCuillin/cuillin_helpercode.git
     cd cuillin_helpercode
     ```
 
